@@ -14,11 +14,6 @@ ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     '.onrender.com',
-    'nayrafashions.com',
-    'www.nayrafashions.com',
-    'api.nayrafashions.com',
-    'backend.nayrafashions.com',  
-    '.railway.app',
 ]
 
 INSTALLED_APPS = [
@@ -153,10 +148,8 @@ SIMPLE_JWT = {
 
 # CORS — allow React frontend
 CORS_ALLOWED_ORIGINS = [
-    'https://nayrafashions.com',
-    'https://www.nayrafashions.com',
-    'https://stupendous-stardust-62679b.netlify.app',
     'http://localhost:3000',
+    'https://nayra-frontend.onrender.com',  # replace with your actual Render frontend URL
 ]
 CORS_ALLOW_CREDENTIALS = True
 
