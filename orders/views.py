@@ -37,14 +37,25 @@ class OrderListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Order.objects.filter(user=self.request.user).order_by('-created_at')
+        return Order.objects.filter(
+            user=self.request.user
+        ).order_by('-created_at')
 
     def perform_create(self, serializer):
-        # Save order with user
-        order = serializer.save(user=self.request.user)
+        # Order is created AFTER payment succeeds on frontend
+        # razorpay_order_id is passed from frontend
+        razorpay_order_id = self.request.data.get(
+            'razorpay_order_id', ''
+        )
 
-        # Save order items from request data
+        order = serializer.save(
+            user=self.request.user,
+            status='pending',
+            razorpay_order_id=razorpay_order_id,
+        )
+
         items_data = self.request.data.get('items', [])
+
         for item in items_data:
             OrderItem.objects.create(
                 order=order,
@@ -55,7 +66,6 @@ class OrderListCreateView(generics.ListCreateAPIView):
                 size=item.get('size', ''),
                 color=item.get('color', ''),
             )
-
 
 class OrderDetailView(generics.RetrieveAPIView):
     serializer_class = OrderSerializer

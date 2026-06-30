@@ -9,9 +9,10 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'email', 'username', 'first_name', 'last_name',
             'phone', 'profile_picture', 'address_line1', 'address_line2',
-            'city', 'state', 'pincode', 'date_joined'
+            'city', 'state', 'pincode', 'date_joined',
+            'is_staff', 'is_superuser'  # ← add these
         ]
-        read_only_fields = ['id', 'date_joined']
+        read_only_fields = ['id', 'date_joined', 'is_staff', 'is_superuser']
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)

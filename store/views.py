@@ -9,7 +9,7 @@ from .serializers import (
 )
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Category.objects.filter(is_active=True)
+    queryset = Category.objects.filter(is_active=True).order_by('name')  # ← fixed
     serializer_class = CategorySerializer
     lookup_field = 'slug'
 
@@ -17,7 +17,7 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Product.objects.filter(is_active=True).prefetch_related(
         'images', 'variants', 'reviews', 'category'
-    )
+    ).order_by('-created_at')  # ← fixed
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['category__slug', 'badge', 'is_featured']
     search_fields = ['name', 'description']
@@ -40,7 +40,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def new_arrivals(self, request):
-        new = self.queryset.filter(badge='new').order_by('-created_at')[:8]
+        new = self.queryset.order_by('-created_at')[:8]  # ← removed badge filter
         serializer = ProductListSerializer(
             new, many=True, context={'request': request}
         )

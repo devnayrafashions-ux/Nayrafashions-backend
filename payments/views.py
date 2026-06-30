@@ -15,26 +15,20 @@ class CreatePaymentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        order_id = request.data.get('order_id')
-        try:
-            order = Order.objects.get(id=order_id, user=request.user)
-        except Order.DoesNotExist:
-            return Response({'error': 'Order not found'}, status=404)
+        # No order_id needed anymore — just the amount
+        amount = request.data.get('amount')
+        if not amount:
+            return Response({'error': 'Amount is required'}, status=400)
 
-        amount_paise = int(float(order.total) * 100)
+        amount_paise = int(float(amount) * 100)
 
         rz_order = client.order.create({
             'amount': amount_paise,
             'currency': 'INR',
-            'receipt': order.order_number,
+            'receipt': f"user_{request.user.id}",
         })
 
-        Payment.objects.create(
-            order=order,
-            razorpay_order_id=rz_order['id'],
-            amount=order.total
-        )
-
+        # Don't create Payment or Order in DB yet — just return the Razorpay order
         return Response({
             'razorpay_order_id': rz_order['id'],
             'amount': amount_paise,
@@ -65,17 +59,26 @@ class VerifyPaymentView(APIView):
         if expected != rz_signature:
             return Response({'error': 'Invalid signature'}, status=400)
 
+        # Signature valid — find the order that was just created
         try:
-            payment = Payment.objects.get(razorpay_order_id=rz_order_id)
-        except Payment.DoesNotExist:
-            return Response({'error': 'Payment record not found'}, status=404)
+            order = Order.objects.get(
+                razorpay_order_id=rz_order_id,
+                user=request.user
+            )
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=404)
 
-        payment.razorpay_payment_id = rz_payment_id
-        payment.razorpay_signature  = rz_signature
-        payment.status = 'paid'
-        payment.save()
+        # Create Payment record and confirm order
+        Payment.objects.create(
+            order=order,
+            razorpay_order_id=rz_order_id,
+            razorpay_payment_id=rz_payment_id,
+            razorpay_signature=rz_signature,
+            amount=order.total,
+            status='paid'
+        )
 
-        payment.order.status = 'confirmed'
-        payment.order.save()
+        order.status = 'confirmed'
+        order.save()
 
         return Response({'status': 'Payment verified successfully'})

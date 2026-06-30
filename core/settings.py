@@ -17,6 +17,8 @@ ALLOWED_HOSTS = [
     'nayrafashions.com',
     'www.nayrafashions.com',
     'api.nayrafashions.com',
+    'backend.nayrafashions.com',  
+    '.railway.app',
 ]
 
 INSTALLED_APPS = [
@@ -43,6 +45,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',   # Must be first
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -72,8 +75,12 @@ TEMPLATES = [
 WSGI_APPLICATION = 'core.wsgi.application'
 
 # Database: use SQLite locally when `USE_SQLITE` is true, otherwise PostgreSQL
-USE_SQLITE = os.getenv('USE_SQLITE', 'True') == 'True'
-if USE_SQLITE:
+# Database
+# Database
+DATABASE_URL = os.getenv('DATABASE_URL')
+USE_SQLITE = os.getenv('USE_SQLITE', 'False') == 'True'  # ← this line was missing!
+
+if USE_SQLITE or not DATABASE_URL:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -82,14 +89,10 @@ if USE_SQLITE:
     }
 else:
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('DB_NAME', 'nayra_db'),
-            'USER': os.getenv('DB_USER', 'postgres'),
-            'PASSWORD': os.getenv('DB_PASSWORD', ''),
-            'HOST': os.getenv('DB_HOST', 'localhost'),
-            'PORT': os.getenv('DB_PORT', '5432'),
-        }
+        'default': dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600
+        )
     }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -152,6 +155,8 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = [
     'https://nayrafashions.com',
     'https://www.nayrafashions.com',
+    'https://stupendous-stardust-62679b.netlify.app',
+    'http://localhost:3000',
 ]
 CORS_ALLOW_CREDENTIALS = True
 

@@ -44,7 +44,7 @@ class AdminDashboardView(APIView):
 
 class AdminCategoryListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Category.objects.annotate(product_count=Count('products'))
+    queryset = Category.objects.annotate(product_count=Count('products')).order_by('name')  # ← fixed
     serializer_class = CategorySerializer
 
     def create(self, request, *args, **kwargs):
@@ -56,13 +56,13 @@ class AdminCategoryListCreateView(generics.ListCreateAPIView):
 
 class AdminCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Category.objects.all()
+    queryset = Category.objects.all().order_by('name')  # ← fixed
     serializer_class = CategorySerializer
 
 
 class AdminProductListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Product.objects.all().select_related('category').prefetch_related('images')
+    queryset = Product.objects.all().select_related('category').prefetch_related('images').order_by('-created_at')  # ← fixed
     serializer_class = ProductListSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['category__slug', 'badge', 'is_active', 'is_featured']
@@ -73,7 +73,6 @@ class AdminProductListCreateView(generics.ListCreateAPIView):
     def create(self, request, *args, **kwargs):
         data = request.data
 
-        # ✅ safely parse sizes JSON string from FormData
         try:
             sizes = json.loads(data.get('sizes', '[]'))
         except (json.JSONDecodeError, TypeError):
@@ -89,7 +88,7 @@ class AdminProductListCreateView(generics.ListCreateAPIView):
             is_active=data.get('is_active', 'true').lower() == 'true',
             is_featured=data.get('is_featured', 'false').lower() == 'true',
             category_id=int(data.get('category')) if data.get('category') else None,
-            sizes=sizes,  # ✅ now works after migration
+            sizes=sizes,
         )
 
         image = request.FILES.get('image')
@@ -102,7 +101,7 @@ class AdminProductListCreateView(generics.ListCreateAPIView):
 
 class AdminProductDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Product.objects.all().select_related('category').prefetch_related('images')
+    queryset = Product.objects.all().select_related('category').prefetch_related('images').order_by('-created_at')  # ← fixed
     serializer_class = ProductDetailSerializer
 
     def update(self, request, *args, **kwargs):
@@ -121,7 +120,6 @@ class AdminProductDetailView(generics.RetrieveUpdateDestroyAPIView):
         if data.get('category'):
             product.category_id = int(data.get('category'))
 
-        # ✅ parse sizes JSON string
         if 'sizes' in data:
             try:
                 product.sizes = json.loads(data.get('sizes'))
@@ -163,12 +161,10 @@ class AdminOrderListView(generics.ListAPIView):
     def get_queryset(self):
         qs = Order.objects.all().select_related('user').order_by('-created_at')
 
-        # ✅ status filter
         status_param = self.request.query_params.get('status')
         if status_param:
             qs = qs.filter(status=status_param)
 
-        # ✅ search filter
         search_param = self.request.query_params.get('search')
         if search_param:
             qs = qs.filter(
@@ -181,12 +177,13 @@ class AdminOrderListView(generics.ListAPIView):
 
         return qs
 
+
 class AdminOrderDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAdminUser]
     serializer_class = OrderSerializer
 
     def get_queryset(self):
-        return Order.objects.all()
+        return Order.objects.all().order_by('-created_at')  # ← fixed
 
     def update(self, request, *args, **kwargs):
         order = self.get_object()
@@ -244,4 +241,4 @@ class AdminReviewListView(generics.ListAPIView):
 
 class AdminReviewDeleteView(generics.DestroyAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Review.objects.all()
+    queryset = Review.objects.all().order_by('-created_at')  # ← fixed
