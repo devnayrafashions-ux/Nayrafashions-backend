@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     # Third party
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',  # ADDED — needed for BLACKLIST_AFTER_ROTATION / logout
     'corsheaders',
     'cloudinary',
     'cloudinary_storage',
@@ -70,10 +71,8 @@ TEMPLATES = [
 WSGI_APPLICATION = 'core.wsgi.application'
 
 # Database: use SQLite locally when `USE_SQLITE` is true, otherwise PostgreSQL
-# Database
-# Database
 DATABASE_URL = os.getenv('DATABASE_URL')
-USE_SQLITE = os.getenv('USE_SQLITE', 'False') == 'True'  # ← this line was missing!
+USE_SQLITE = os.getenv('USE_SQLITE', 'False') == 'True'
 
 if USE_SQLITE or not DATABASE_URL:
     DATABASES = {
@@ -124,7 +123,7 @@ AUTH_USER_MODEL = 'users.CustomUser'
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'users.authentication.CookieJWTAuthentication',  # CHANGED — reads JWT from httpOnly cookie
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -143,16 +142,67 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,          # ADDED — invalidates old refresh token on rotation
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_COOKIE_ACCESS': 'access_token',      # ADDED — cookie name for access token
+    'AUTH_COOKIE_REFRESH': 'refresh_token',    # ADDED — cookie name for refresh token
 }
+
+# ─── Cookie / CSRF settings (ADDED) ────────────────────────────────
+# Required for httpOnly-cookie JWT auth. 'None' is needed (not 'Lax')
+# because onrender.com is on the public suffix list, so your frontend
+# and backend subdomains are treated as cross-site by browsers.
+# SameSite=None cookies must also be Secure, which is true in
+# production since Render serves everything over HTTPS.
+COOKIE_SECURE = not DEBUG
+COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = COOKIE_SAMESITE
+CSRF_COOKIE_HTTPONLY = False   # frontend JS must be able to read this one to echo it back
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = COOKIE_SAMESITE
+
+CSRF_TRUSTED_ORIGINS = [
+    'https://nayra-frontend.onrender.com',
+    # add your backend's own onrender.com URL too if you ever hit
+    # admin or API docs directly in a browser and see CSRF failures
+]
 
 # CORS — allow React frontend
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
-    'https://nayra-frontend.onrender.com',  # replace with your actual Render frontend URL
+    'https://nayra-frontend.onrender.com',
+    # replace with your actual Render frontend URL
 ]
 CORS_ALLOW_CREDENTIALS = True
 
 # Razorpay
 RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID')
 RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET')
+
+# ─── Email (shipment notifications) ────────────────────────────────
+# NEW: SMTP config for sending order status emails (e.g. "Your order has
+# shipped" with tracking info). Uses Gmail SMTP by default — to set this
+# up:
+#   1. Use a Gmail account (or any SMTP-compatible provider).
+#   2. If using Gmail, enable 2-Step Verification on that account, then
+#      generate an "App Password" at https://myaccount.google.com/apppasswords
+#      (a regular Gmail password will NOT work here).
+#   3. Add these to your .env file:
+#        EMAIL_HOST_USER=youraddress@gmail.com
+#        EMAIL_HOST_PASSWORD=your16charapppassword
+#        DEFAULT_FROM_EMAIL=Nayra Fashions <youraddress@gmail.com>
+# In DEBUG mode with no credentials set, emails are printed to the
+# console instead of actually sending, so local dev doesn't break.
+if DEBUG and not os.getenv('EMAIL_HOST_USER'):
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
