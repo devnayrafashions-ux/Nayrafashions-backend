@@ -30,8 +30,15 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('confirm_password')
-        # Auto-generate username from email
-        validated_data['username'] = validated_data['email'].split('@')[0]
+        # FIX: previously used validated_data['email'].split('@')[0],
+        # which produces the SAME username for different emails that
+        # share a prefix (e.g. admin@nayra.in and admin@nayra.com both
+        # became "admin"). AbstractUser.username is unique, so the
+        # second registration always hit a database IntegrityError and
+        # crashed with a 500 — regardless of which email was used.
+        # The email field is already guaranteed unique, so using it
+        # directly as the username removes the collision entirely.
+        validated_data['username'] = validated_data['email']
         user = CustomUser.objects.create_user(**validated_data)
         return user
 
