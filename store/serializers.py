@@ -4,11 +4,15 @@ from .models import Category, Product, ProductImage, ProductVariant, Review, Wis
 
 class CategorySerializer(serializers.ModelSerializer):
     product_count = serializers.SerializerMethodField()
+    product_type_display = serializers.CharField(
+        source='get_product_type_display', read_only=True
+    )
 
     class Meta:
         model = Category
         fields = ['id', 'name', 'slug', 'description', 'image',
-                  'is_active', 'product_count']
+                  'is_active', 'product_count',
+                  'product_type', 'product_type_display']
 
     def get_product_count(self, obj):
         return obj.products.filter(is_active=True).count()
@@ -52,6 +56,9 @@ class ProductListSerializer(serializers.ModelSerializer):
     primary_image = serializers.SerializerMethodField()
     category_name = serializers.SerializerMethodField()
     discount_percent = serializers.SerializerMethodField()
+    # NEW: surfaced directly so the frontend can branch on it
+    # (e.g. hide size chips) without needing a separate category lookup.
+    product_type = serializers.CharField(read_only=True)
 
     class Meta:
         model = Product
@@ -59,7 +66,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'price', 'original_price',
             'discount_percent', 'badge', 'stock',
             'is_active', 'is_featured',
-            'sizes', 'category',
+            'sizes', 'category', 'product_type',
             'primary_image', 'category_name',
         ]
 
@@ -88,13 +95,14 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     primary_image = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
     discount_percent = serializers.SerializerMethodField()
+    product_type = serializers.CharField(read_only=True)
 
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'slug', 'description', 'price', 'original_price',
             'discount_percent', 'badge', 'stock',
-            'is_active', 'is_featured', 'sizes',
+            'is_active', 'is_featured', 'sizes', 'product_type',
             'category', 'category_name', 'primary_image',
             'images', 'variants', 'reviews',
             'avg_rating', 'created_at',

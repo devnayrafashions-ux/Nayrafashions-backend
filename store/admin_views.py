@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Count, Q, Case, When, Value, IntegerField
 from django.utils import timezone
 from datetime import timedelta
 from .models import Category, Product, ProductImage, Review
@@ -12,6 +12,7 @@ from .serializers import CategorySerializer, ProductListSerializer, ProductDetai
 from users.models import CustomUser
 from orders.models import Order
 from orders.serializers import OrderSerializer
+from orders.utils import send_shipment_email
 
 
 class IsAdminUser(permissions.BasePermission):
@@ -44,7 +45,7 @@ class AdminDashboardView(APIView):
 
 class AdminCategoryListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Category.objects.annotate(product_count=Count('products')).order_by('name')  # ← fixed
+    queryset = Category.objects.annotate(product_count=Count('products')).order_by('name')
     serializer_class = CategorySerializer
 
     def create(self, request, *args, **kwargs):
@@ -56,13 +57,13 @@ class AdminCategoryListCreateView(generics.ListCreateAPIView):
 
 class AdminCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Category.objects.all().order_by('name')  # ← fixed
+    queryset = Category.objects.all().order_by('name')
     serializer_class = CategorySerializer
 
 
 class AdminProductListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Product.objects.all().select_related('category').prefetch_related('images').order_by('-created_at')  # ← fixed
+    queryset = Product.objects.all().select_related('category').prefetch_related('images').order_by('-created_at')
     serializer_class = ProductListSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['category__slug', 'badge', 'is_active', 'is_featured']
@@ -101,7 +102,7 @@ class AdminProductListCreateView(generics.ListCreateAPIView):
 
 class AdminProductDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Product.objects.all().select_related('category').prefetch_related('images').order_by('-created_at')  # ← fixed
+    queryset = Product.objects.all().select_related('category').prefetch_related('images').order_by('-created_at')
     serializer_class = ProductDetailSerializer
 
     def update(self, request, *args, **kwargs):
@@ -150,16 +151,32 @@ class AdminProductToggleView(APIView):
             return Response({'error': 'Not found'}, status=404)
 
 
+# NEW: statuses that still need admin action. Orders in these statuses
+# are surfaced first (oldest first) so the admin's attention lands on
+# what actually needs doing, instead of scrolling past resolved orders.
+ACTIONABLE_STATUSES = ['pending', 'confirmed', 'processing']
+
+
 class AdminOrderListView(generics.ListAPIView):
     permission_classes = [IsAdminUser]
     serializer_class = OrderSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['order_number', 'full_name', 'email', 'phone', 'city']
     ordering_fields = ['created_at', 'total', 'status']
+    # NOTE: this default is overridden by the explicit .order_by() in
+    # get_queryset() below unless the client passes ?ordering=... explicitly.
     ordering = ['-created_at']
 
+    def get_serializer_context(self):
+        # NEW: needed so OrderItemSerializer.get_primary_image can build
+        # absolute image URLs — without this, images returned relative
+        # paths that wouldn't load correctly in the admin UI.
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
     def get_queryset(self):
-        qs = Order.objects.all().select_related('user').order_by('-created_at')
+        qs = Order.objects.all().select_related('user')
 
         status_param = self.request.query_params.get('status')
         if status_param:
@@ -175,6 +192,19 @@ class AdminOrderListView(generics.ListAPIView):
                 Q(city__icontains=search_param)
             )
 
+        # NEW: annotate a priority flag — 0 for orders still needing
+        # action (pending/confirmed/processing), 1 for resolved orders
+        # (shipped/delivered/cancelled/refunded). Ordering by priority
+        # first, then created_at ascending, pushes the oldest
+        # still-open orders to the very top of the list.
+        qs = qs.annotate(
+            priority=Case(
+                When(status__in=ACTIONABLE_STATUSES, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        ).order_by('priority', 'created_at')
+
         return qs
 
 
@@ -182,16 +212,38 @@ class AdminOrderDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAdminUser]
     serializer_class = OrderSerializer
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
     def get_queryset(self):
-        return Order.objects.all().order_by('-created_at')  # ← fixed
+        return Order.objects.all().order_by('-created_at')
 
     def update(self, request, *args, **kwargs):
         order = self.get_object()
         new_status = request.data.get('status')
+        was_already_shipped = order.status == 'shipped'
+
+        # NEW: capture tracking info if provided (sent when admin marks
+        # an order "Shipped" from the frontend prompt).
+        if 'tracking_number' in request.data:
+            order.tracking_number = request.data.get('tracking_number', '')
+        if 'courier_name' in request.data:
+            order.courier_name = request.data.get('courier_name', '')
+
         if new_status and new_status in dict(Order.STATUS_CHOICES):
             order.status = new_status
-            order.save()
-        serializer = OrderSerializer(order)
+
+        order.save()
+
+        # NEW: fire the shipment email exactly once — only when the
+        # status is (newly) 'shipped', not on every subsequent edit to
+        # an order that was already shipped.
+        if new_status == 'shipped' and not was_already_shipped:
+            send_shipment_email(order)
+
+        serializer = OrderSerializer(order, context={'request': request})
         return Response(serializer.data)
 
 
@@ -226,7 +278,7 @@ class AdminCustomerDetailView(generics.RetrieveAPIView):
         customer = self.get_object()
         data = UserSerializer(customer).data
         orders = Order.objects.filter(user=customer).order_by('-created_at')
-        data['orders'] = OrderSerializer(orders, many=True).data
+        data['orders'] = OrderSerializer(orders, many=True, context={'request': request}).data
         data['order_count'] = orders.count()
         return Response(data)
 
@@ -241,4 +293,4 @@ class AdminReviewListView(generics.ListAPIView):
 
 class AdminReviewDeleteView(generics.DestroyAPIView):
     permission_classes = [IsAdminUser]
-    queryset = Review.objects.all().order_by('-created_at')  # ← fixed
+    queryset = Review.objects.all().order_by('-created_at')

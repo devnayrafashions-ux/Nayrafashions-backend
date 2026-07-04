@@ -8,18 +8,29 @@ from .serializers import (
     ProductDetailSerializer, ReviewSerializer
 )
 
+
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Category.objects.filter(is_active=True).order_by('name')  # ← fixed
+    queryset = Category.objects.filter(is_active=True).order_by('name')
     serializer_class = CategorySerializer
     lookup_field = 'slug'
+    # NEW: lets the frontend ask for only Jewelry (or Dress, or Hair
+    # Accessory) categories, e.g. /api/categories/?product_type=jewelry
+    # — used by the sidebar so it only lists sub-categories relevant to
+    # whichever type-level page the customer is currently browsing.
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['product_type']
 
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Product.objects.filter(is_active=True).prefetch_related(
         'images', 'variants', 'reviews', 'category'
-    ).order_by('-created_at')  # ← fixed
+    ).order_by('-created_at')
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['category__slug', 'badge', 'is_featured']
+    # NEW: category__product_type added alongside the existing
+    # category__slug — one filters to a specific sub-category (e.g.
+    # "necklaces"), the other filters to an entire product line (e.g.
+    # every jewelry product regardless of sub-category).
+    filterset_fields = ['category__slug', 'category__product_type', 'badge', 'is_featured']
     search_fields = ['name', 'description']
     ordering_fields = ['price', 'created_at']
     ordering = ['-created_at']
@@ -40,9 +51,21 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def new_arrivals(self, request):
-        new = self.queryset.order_by('-created_at')[:8]  # ← removed badge filter
+        new = self.queryset.order_by('-created_at')[:8]
         serializer = ProductListSerializer(
             new, many=True, context={'request': request}
+        )
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def jewelry_and_accessories(self, request):
+        """Used by the homepage slider (step 6) — jewelry + hair accessory
+        products combined, newest first, capped for a slider row."""
+        items = self.queryset.filter(
+            category__product_type__in=['jewelry', 'hair_accessory']
+        )[:12]
+        serializer = ProductListSerializer(
+            items, many=True, context={'request': request}
         )
         return Response(serializer.data)
 

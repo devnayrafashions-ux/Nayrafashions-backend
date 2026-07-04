@@ -3,6 +3,20 @@ from django.utils.text import slugify
 
 
 class Category(models.Model):
+    PRODUCT_TYPE_CHOICES = [
+        ('dress', 'Dress'),
+        ('jewelry', 'Jewelry'),
+        ('hair_accessory', 'Hair Accessory'),
+    ]
+
+    # NEW: every category now declares which product line it belongs to.
+    # e.g. "Kurtas" -> dress, "Necklaces" -> jewelry, "Clips" -> hair_accessory.
+    # This single field drives: navbar grouping, admin category dropdown,
+    # admin product-form category filtering, and whether "sizes" applies.
+    product_type = models.CharField(
+        max_length=20, choices=PRODUCT_TYPE_CHOICES, default='dress'
+    )
+
     name = models.CharField(max_length=100)
     slug = models.SlugField(unique=True, blank=True)
     description = models.TextField(blank=True)
@@ -18,7 +32,7 @@ class Category(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.get_product_type_display()})"
 
 
 class Product(models.Model):
@@ -31,24 +45,27 @@ class Product(models.Model):
 
     category = models.ForeignKey(
         Category, on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='products'  # ✅ added blank=True
+        null=True, blank=True, related_name='products'
     )
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, blank=True)
-    description = models.TextField(blank=True)  # ✅ added blank=True so it's not required
+    description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     original_price = models.DecimalField(
         max_digits=10, decimal_places=2, blank=True, null=True
     )
     stock = models.PositiveIntegerField(default=0)
     badge = models.CharField(max_length=20, choices=BADGE_CHOICES, blank=True)
-    sizes = models.JSONField(default=list, blank=True)  # ✅ NEW FIELD
+    # Sizes only apply to dresses. Left as-is structurally (JSON list) but the
+    # admin form (step 2/3) will hide this field entirely when the selected
+    # category's product_type isn't 'dress', and it'll stay an empty list
+    # for jewelry / hair accessory products.
+    sizes = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # ... rest stays the same
     def save(self, *args, **kwargs):
         if not self.slug or self.slug.strip() == '':
             base_slug = slugify(self.name)
@@ -59,6 +76,12 @@ class Product(models.Model):
                 counter += 1
             self.slug = slug
         super().save(*args, **kwargs)
+
+    @property
+    def product_type(self):
+        """Convenience passthrough so views/serializers/orders can filter
+        or display type without joining through category every time."""
+        return self.category.product_type if self.category else None
 
     @property
     def discount_percent(self):
@@ -107,7 +130,7 @@ class Review(models.Model):
     user = models.ForeignKey(
         'users.CustomUser', on_delete=models.CASCADE
     )
-    rating = models.PositiveSmallIntegerField()  # 1–5
+    rating = models.PositiveSmallIntegerField()  # 1-5
     title = models.CharField(max_length=100, blank=True)
     body = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -116,7 +139,7 @@ class Review(models.Model):
         unique_together = ('product', 'user')
 
     def __str__(self):
-        return f"{self.user.email} → {self.product.name} ({self.rating}★)"
+        return f"{self.user.email} -> {self.product.name} ({self.rating} stars)"
 
 
 class Wishlist(models.Model):

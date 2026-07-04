@@ -37,6 +37,13 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class CustomTokenSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
+        email = attrs.get(self.username_field)
+
+        if email and not CustomUser.objects.filter(email=email).exists():
+            raise serializers.ValidationError({
+                'email': 'No account found with this email. Please register first.'
+            })
+
         data = super().validate(attrs)
         data['user'] = UserSerializer(self.user).data
         return data

@@ -71,6 +71,11 @@ class Order(models.Model):
     shipping_charge = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=10, decimal_places=2)
 
+    # NEW: shipment tracking info, filled in by admin when marking an
+    # order "Shipped". Used to email the customer their tracking details.
+    tracking_number = models.CharField(max_length=100, blank=True)
+    courier_name = models.CharField(max_length=100, blank=True)
+
     notes = models.TextField(blank=True)
     razorpay_order_id = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -96,7 +101,26 @@ class OrderItem(models.Model):
     quantity = models.PositiveIntegerField()
     size = models.CharField(max_length=20, blank=True)
     color = models.CharField(max_length=50, blank=True)
+    # NEW: snapshot of 'dress' / 'jewelry' / 'hair_accessory' at order time.
+    # Lets My Orders / Admin Orders always know whether to show a size chip
+    # for this line item, even if the product or its category is later
+    # edited or deleted — mirrors the existing product_name/product_price
+    # snapshot pattern rather than relying on a live FK lookup.
+    product_type = models.CharField(max_length=20, blank=True)
 
     @property
     def subtotal(self):
         return self.product_price * self.quantity
+
+    @property
+    def primary_image(self):
+        """Falls back to the live product's image if it still exists;
+        returns None if the product was deleted so the frontend can show
+        a placeholder instead of erroring."""
+        if not self.product:
+            return None
+        img = self.product.images.filter(is_primary=True).first() or self.product.images.first()
+        return img.image.url if img else None
+
+    def __str__(self):
+        return f"{self.quantity}x {self.product_name}"
