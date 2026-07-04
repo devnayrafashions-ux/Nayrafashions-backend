@@ -40,8 +40,15 @@ def _set_auth_cookies(response, access=None, refresh=None):
 
 
 def _clear_auth_cookies(response):
-    response.delete_cookie(ACCESS_COOKIE, path='/')
-    response.delete_cookie(REFRESH_COOKIE, path='/api/auth/token/refresh/')
+    # IMPORTANT: samesite must match what was used in _set_auth_cookies.
+    # Browsers won't let a Set-Cookie without SameSite=None; Secure
+    # overwrite/delete a cookie that was originally set with those
+    # attributes — the deletion is silently ignored otherwise, which
+    # is exactly the "logout doesn't work" bug this fixes.
+    response.delete_cookie(ACCESS_COOKIE, path='/', samesite=settings.COOKIE_SAMESITE)
+    response.delete_cookie(
+        REFRESH_COOKIE, path='/api/auth/token/refresh/', samesite=settings.COOKIE_SAMESITE
+    )
     return response
 
 
