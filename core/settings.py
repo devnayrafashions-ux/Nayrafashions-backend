@@ -15,6 +15,7 @@ ALLOWED_HOSTS = [
     '127.0.0.1',
     '.onrender.com',
     'backend.nayrafashions.com',
+    'www.backend.nayrafashions.com',
     'www.nayrafashions.com',
     'nayrafashions.com',
 ]
