@@ -14,6 +14,9 @@ ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     '.onrender.com',
+    'backend.nayrafashions.com',
+    'www.nayrafashions.com',
+    'nayrafashions.com',
 ]
 
 INSTALLED_APPS = [
@@ -148,12 +151,12 @@ SIMPLE_JWT = {
     'AUTH_COOKIE_REFRESH': 'refresh_token',    # ADDED — cookie name for refresh token
 }
 
-# ─── Cookie / CSRF settings (ADDED) ────────────────────────────────
+# ─── Cookie / CSRF settings ────────────────────────────────
 # Required for httpOnly-cookie JWT auth. 'None' is needed (not 'Lax')
-# because onrender.com is on the public suffix list, so your frontend
-# and backend subdomains are treated as cross-site by browsers.
-# SameSite=None cookies must also be Secure, which is true in
-# production since Render serves everything over HTTPS.
+# because your frontend and backend are on different subdomains and
+# browsers treat them as cross-site. SameSite=None cookies must also
+# be Secure, which is true in production since your domain is served
+# over HTTPS.
 COOKIE_SECURE = not DEBUG
 COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
 
@@ -164,16 +167,16 @@ SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = COOKIE_SAMESITE
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://nayra-frontend.onrender.com',
-    # add your backend's own onrender.com URL too if you ever hit
-    # admin or API docs directly in a browser and see CSRF failures
+    'https://www.nayrafashions.com',
+    'https://nayrafashions.com',
+    'https://backend.nayrafashions.com',
 ]
 
 # CORS — allow React frontend
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
-    'https://nayra-frontend.onrender.com',
-    # replace with your actual Render frontend URL
+    'https://www.nayrafashions.com',
+    'https://nayrafashions.com',
 ]
 CORS_ALLOW_CREDENTIALS = True
 
