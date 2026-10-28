@@ -1,4 +1,3 @@
-
 import json
 from decimal import Decimal, InvalidOperation
 
@@ -30,6 +29,9 @@ from users.models import CustomUser
 from orders.models import Order
 from orders.serializers import OrderSerializer
 from orders.utils import send_shipment_email
+
+# Real purchases only: hides unpaid / abandoned checkouts.
+from orders.views import admin_visible_orders
 
 
 class IsAdminUser(permissions.BasePermission):
@@ -210,7 +212,6 @@ def get_size_stock_data(request, raw_sizes):
     return None
 
 
-
 def sync_product_variants(product, sizes, size_stock_map):
     """
     Save stock for each selected size and synchronize total product stock.
@@ -248,7 +249,6 @@ def sync_product_variants(product, sizes, size_stock_map):
 
     product.stock = total_stock
     product.save(update_fields=["stock"])
-
 
     # Do not delete variants that may be referenced by cart items or orders.
     total_variant_stock = ProductVariant.objects.filter(
@@ -308,9 +308,13 @@ class AdminDashboardView(APIView):
             or 0
         )
 
+        # Only real (paid) orders are counted. Unpaid/abandoned checkouts
+        # are hidden everywhere in the admin panel.
+        visible = admin_visible_orders()
+
         data = {
             "total_revenue": float(total_revenue),
-            "total_orders": Order.objects.count(),
+            "total_orders": visible.count(),
             "total_products": Product.objects.count(),
             "active_products": Product.objects.filter(
                 is_active=True
@@ -318,21 +322,13 @@ class AdminDashboardView(APIView):
             "total_customers": CustomUser.objects.filter(
                 is_staff=False
             ).count(),
-            "pending_orders": Order.objects.filter(
-                status="pending"
-            ).count(),
-            "processing_orders": Order.objects.filter(
-                status="processing"
-            ).count(),
-            "shipped_orders": Order.objects.filter(
-                status="shipped"
-            ).count(),
-            "delivered_orders": Order.objects.filter(
-                status="delivered"
-            ).count(),
-            "cancelled_orders": Order.objects.filter(
-                status="cancelled"
-            ).count(),
+            # Unpaid "pending" orders are hidden, so "pending" here means
+            # paid orders waiting for staff action (status "confirmed").
+            "pending_orders": visible.filter(status="confirmed").count(),
+            "processing_orders": visible.filter(status="processing").count(),
+            "shipped_orders": visible.filter(status="shipped").count(),
+            "delivered_orders": visible.filter(status="delivered").count(),
+            "cancelled_orders": visible.filter(status="cancelled").count(),
         }
 
         return Response(data)
@@ -637,7 +633,8 @@ class AdminOrderListView(generics.ListAPIView):
         return context
 
     def get_queryset(self):
-        queryset = Order.objects.all().select_related("user")
+        # Real (paid) orders only; unpaid/abandoned checkouts are hidden.
+        queryset = admin_visible_orders()
 
         status_param = self.request.query_params.get("status")
         if status_param:
@@ -673,7 +670,6 @@ class AdminOrderListView(generics.ListAPIView):
         return queryset
 
 
-
 class AdminOrderDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAdminUser]
     serializer_class = OrderSerializer
@@ -684,7 +680,8 @@ class AdminOrderDetailView(generics.RetrieveUpdateAPIView):
         return context
 
     def get_queryset(self):
-        return Order.objects.all().order_by("-created_at")
+        # Hidden (unpaid) orders cannot be opened or edited by ID.
+        return admin_visible_orders()
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
@@ -813,9 +810,16 @@ class AdminCustomerListView(generics.ListAPIView):
     search_fields = ["email", "first_name", "last_name", "phone"]
 
     def get_queryset(self):
+        # Count only real (paid) orders, not unpaid/abandoned checkouts.
+        paid_orders = ~Q(orders__status="pending") & ~Q(
+            orders__payment__status__in=["created", "failed"]
+        )
+
         return (
             CustomUser.objects.filter(is_staff=False)
-            .annotate(order_count=Count("orders"))
+            .annotate(
+                order_count=Count("orders", filter=paid_orders, distinct=True)
+            )
             .order_by("-date_joined")
         )
 
@@ -844,9 +848,7 @@ class AdminCustomerDetailView(generics.RetrieveAPIView):
         customer = self.get_object()
         data = UserSerializer(customer).data
 
-        orders = Order.objects.filter(
-            user=customer
-        ).order_by("-created_at")
+        orders = admin_visible_orders().filter(user=customer)
 
         data["orders"] = OrderSerializer(
             orders,

@@ -29,6 +29,27 @@ def customer_visible_orders(user):
     )
 
 
+def admin_visible_orders():
+    """
+    Orders the admin panel should show: real purchases only.
+
+    Hides unpaid / abandoned checkouts:
+      * status 'pending'                      -> checkout started, unpaid
+      * payment status 'created' / 'failed'   -> never paid (incl. orders
+        cancelled by the cancel_abandoned_orders command)
+    Paid orders that are later cancelled/refunded by staff stay visible.
+
+    Use this in the admin orders list view instead of Order.objects.all().
+    """
+    return (
+        Order.objects.exclude(status="pending")
+        .exclude(payment__status__in=["created", "failed"])
+        .select_related("user")
+        .prefetch_related("items")
+        .order_by("-created_at")
+    )
+
+
 class CartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
