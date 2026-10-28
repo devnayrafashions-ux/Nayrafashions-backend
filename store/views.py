@@ -9,28 +9,44 @@ from .serializers import (
 )
 
 
+
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Category.objects.filter(is_active=True).order_by('name')
+    queryset = Category.objects.filter(
+        is_active=True
+    ).order_by('name')
+
     serializer_class = CategorySerializer
     lookup_field = 'slug'
-    # NEW: lets the frontend ask for only Jewelry (or Dress, or Hair
-    # Accessory) categories, e.g. /api/categories/?product_type=jewelry
-    # — used by the sidebar so it only lists sub-categories relevant to
-    # whichever type-level page the customer is currently browsing.
+
+    # Only filter using fields that belong to Category.
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['product_type']
 
 
+
+
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Product.objects.filter(is_active=True).prefetch_related(
+    queryset = Product.objects.filter(
+        is_active=True
+    ).prefetch_related(
         'images', 'variants', 'reviews', 'category'
     ).order_by('-created_at')
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    # NEW: category__product_type added alongside the existing
-    # category__slug — one filters to a specific sub-category (e.g.
-    # "necklaces"), the other filters to an entire product line (e.g.
-    # every jewelry product regardless of sub-category).
-    filterset_fields = ['category__slug', 'category__product_type', 'badge', 'is_featured']
+
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+
+    filterset_fields = [
+        'category__slug',
+        'category__product_type',
+        'badge',
+        'is_featured',
+        'is_budget_friendly',
+        'is_own_brand',
+    ]
+
     search_fields = ['name', 'description']
     ordering_fields = ['price', 'created_at']
     ordering = ['-created_at']
@@ -40,6 +56,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == 'retrieve':
             return ProductDetailSerializer
         return ProductListSerializer
+
 
     @action(detail=False, methods=['get'])
     def featured(self, request):

@@ -75,18 +75,25 @@ class Order(models.Model):
     # order "Shipped". Used to email the customer their tracking details.
     tracking_number = models.CharField(max_length=100, blank=True)
     courier_name = models.CharField(max_length=100, blank=True)
+    tracking_url = models.URLField(blank=True) 
 
     notes = models.TextField(blank=True)
     razorpay_order_id = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @classmethod
+    def _generate_order_number(cls):
+        import random, string
+        for _ in range(20):
+            candidate = 'NF' + ''.join(random.choices(string.digits, k=8))
+            if not cls.objects.filter(order_number=candidate).exists():
+                return candidate
+        raise RuntimeError('Could not generate a unique order number')
+
     def save(self, *args, **kwargs):
         if not self.order_number:
-            import random, string
-            self.order_number = 'NF' + ''.join(
-                random.choices(string.digits, k=8)
-            )
+            self.order_number = self._generate_order_number()
         super().save(*args, **kwargs)
 
     def __str__(self):

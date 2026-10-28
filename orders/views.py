@@ -1,11 +1,53 @@
+from django.shortcuts import get_object_or_404
+
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db.models import F
-from django.db.models.functions import Greatest
-from .models import Cart, CartItem, Order, OrderItem
-from .serializers import CartSerializer, CartItemSerializer, OrderSerializer
-from store.models import Product
+
+from .models import Cart, CartItem, Order
+from .serializers import CartSerializer, OrderSerializer
+from store.models import Product, ProductVariant
+
+
+def customer_visible_orders(user):
+    """
+    Orders a customer should see in My Orders: real purchases only.
+
+    Hidden (but kept in the database for reconciliation):
+      * status 'pending'                      -> checkout started, unpaid
+      * payment status 'created' / 'failed'   -> never paid (incl. orders
+        later cancelled by the abandoned-checkout job)
+    Orders with no Payment row (legacy) are shown unless still 'pending'.
+    Paid orders that are later cancelled/refunded by staff stay visible.
+    """
+    return (
+        Order.objects.filter(user=user)
+        .exclude(status="pending")
+        .exclude(payment__status__in=["created", "failed"])
+        .prefetch_related("items")
+        .order_by("-created_at")
+    )
+
+
+def admin_visible_orders():
+    """
+    Orders the admin panel should show: real purchases only.
+
+    Hides unpaid / abandoned checkouts:
+      * status 'pending'                      -> checkout started, unpaid
+      * payment status 'created' / 'failed'   -> never paid (incl. orders
+        cancelled by the cancel_abandoned_orders command)
+    Paid orders that are later cancelled/refunded by staff stay visible.
+
+    Use this in the admin orders list view instead of Order.objects.all().
+    """
+    return (
+        Order.objects.exclude(status="pending")
+        .exclude(payment__status__in=["created", "failed"])
+        .select_related("user")
+        .prefetch_related("items")
+        .order_by("-created_at")
+    )
 
 
 class CartView(APIView):
@@ -16,85 +58,97 @@ class CartView(APIView):
         return Response(CartSerializer(cart).data)
 
     def post(self, request):
+        product_id = request.data.get("product_id")
+        variant_id = request.data.get("variant_id")
+        quantity = request.data.get("quantity", 1)
+
+        try:
+            quantity = int(quantity)
+            if quantity < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "Quantity must be a positive integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        product = get_object_or_404(Product, id=product_id, is_active=True)
+
+        variant = None
+        if variant_id:
+            variant = get_object_or_404(
+                ProductVariant, id=variant_id, product=product
+            )
+            if variant.stock < quantity:
+                return Response(
+                    {"error": "Not enough stock for the selected size."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif product.variants.exists():
+            return Response(
+                {"error": "Please select a size."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        elif product.stock < quantity:
+            return Response(
+                {"error": "Not enough stock available."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         cart, _ = Cart.objects.get_or_create(user=request.user)
-        product_id = request.data.get('product_id')
-        quantity = int(request.data.get('quantity', 1))
+
         item, created = CartItem.objects.get_or_create(
-            cart=cart, product_id=product_id
+            cart=cart,
+            product=product,
+            variant=variant,
+            defaults={"quantity": quantity},
         )
+
         if not created:
             item.quantity += quantity
-        else:
-            item.quantity = quantity
-        item.save()
-        return Response(CartSerializer(cart).data, status=status.HTTP_201_CREATED)
+            available_stock = variant.stock if variant else product.stock
+            if item.quantity > available_stock:
+                return Response(
+                    {"error": "Requested quantity exceeds available stock."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            item.save(update_fields=["quantity"])
+
+        return Response(
+            CartSerializer(cart).data, status=status.HTTP_201_CREATED
+        )
 
     def delete(self, request):
-        item_id = request.data.get('item_id')
+        item_id = request.data.get("item_id")
         CartItem.objects.filter(id=item_id, cart__user=request.user).delete()
-        cart = Cart.objects.get(user=request.user)
+        cart, _ = Cart.objects.get_or_create(user=request.user)
         return Response(CartSerializer(cart).data)
 
 
-class OrderListCreateView(generics.ListCreateAPIView):
+class OrderListView(generics.ListAPIView):
+    """
+    GET /api/orders/  ->  My Orders (paid purchases only).
+
+    The old POST handler was removed on purpose. It created orders with
+    shipping hard-coded to 0, no Payment record, and bypassed the single
+    checkout flow (payments/create-order -> payments/verify). Orders are now
+    created ONLY by /api/payments/create-order/ and confirmed ONLY by
+    /api/payments/verify/ or the Razorpay webhook.
+    """
     serializer_class = OrderSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_serializer_context(self):
-        # Needed so OrderItemSerializer.get_primary_image can build
-        # absolute image URLs (request.build_absolute_uri).
         context = super().get_serializer_context()
-        context['request'] = self.request
+        context["request"] = self.request
         return context
 
     def get_queryset(self):
-        return Order.objects.filter(
-            user=self.request.user
-        ).order_by('-created_at')
+        return customer_visible_orders(self.request.user)
 
-    def perform_create(self, serializer):
-        # Order is created AFTER payment succeeds on frontend
-        # razorpay_order_id is passed from frontend
-        razorpay_order_id = self.request.data.get(
-            'razorpay_order_id', ''
-        )
 
-        order = serializer.save(
-            user=self.request.user,
-            status='pending',
-            razorpay_order_id=razorpay_order_id,
-        )
-
-        items_data = self.request.data.get('items', [])
-
-        for item in items_data:
-            product_id = item.get('product_id')
-            quantity = item.get('quantity', 1)
-
-            OrderItem.objects.create(
-                order=order,
-                product_id=product_id,
-                product_name=item.get('product_name', ''),
-                product_price=item.get('product_price', 0),
-                quantity=quantity,
-                size=item.get('size', ''),
-                color=item.get('color', ''),
-                # NEW: snapshot the type sent from checkout (dress /
-                # jewelry / hair_accessory) so order history stays accurate
-                # even if the product is later edited or removed.
-                product_type=item.get('product_type', ''),
-            )
-
-            # NEW: decrement stock on the actual Product row every time
-            # an order is placed, so admin's Products page always
-            # reflects real remaining stock without any manual update.
-            # Greatest(..., 0) prevents stock from ever going negative
-            # even if quantity somehow exceeds what's left (e.g. two
-            # near-simultaneous orders for the last few units).
-            if product_id:
-                Product.objects.filter(id=product_id).update(
-                    stock=Greatest(F('stock') - quantity, 0)
-                )
+# Backwards-compatible name so orders/urls.py keeps working unchanged.
+OrderListCreateView = OrderListView
 
 
 class OrderDetailView(generics.RetrieveAPIView):
@@ -103,8 +157,8 @@ class OrderDetailView(generics.RetrieveAPIView):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        context['request'] = self.request
+        context["request"] = self.request
         return context
 
     def get_queryset(self):
-        return Order.objects.filter(user=self.request.user)
+        return customer_visible_orders(self.request.user)
